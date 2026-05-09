@@ -763,6 +763,28 @@ body {
   }
 }
 
+@keyframes userPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.5), 0 0 14px rgba(37, 99, 235, 0.3);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(37, 99, 235, 0), 0 0 24px rgba(37, 99, 235, 0.5);
+    transform: scale(1.15);
+  }
+}
+
+@keyframes dashMove {
+  to {
+    stroke-dashoffset: -48;
+  }
+}
+
+/* Animated dashed blue path: user → selected bus */
+.user-to-bus-path path {
+  animation: dashMove 1.2s linear infinite;
+}
+
 @keyframes slideUp {
   from {
     opacity: 0;

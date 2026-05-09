@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useMemo, memo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 
@@ -75,7 +75,6 @@ const LiveCountdown = ({ waitTicks }) => {
 };
 
 // ── Smooth Marker Component ───────────────────────────────────────────────────
-import { useState, useMemo, memo } from 'react';
 
 const SmoothMarker = memo(({ position, icon, eventHandlers, children }) => {
   const markerRef = useRef(null);
@@ -187,6 +186,24 @@ function FlyTo({ position, zoom = 14 }) {
     prevRef.current = key;
     map.flyTo(position, zoom, { duration: 1.0 });
   }, [position, zoom, map]);
+  return null;
+}
+
+// ── FlyToBounds: fits user + selected bus in view ─────────────────────────────
+function FlyToBounds({ userLocation, bus }) {
+  const map = useMap();
+  const prevRef = useRef(null);
+  useEffect(() => {
+    if (!userLocation || !bus?.lat) return;
+    const key = `${userLocation.lat.toFixed(4)},${userLocation.lng.toFixed(4)},${bus.lat.toFixed(4)},${bus.lng.toFixed(4)}`;
+    if (key === prevRef.current) return;
+    prevRef.current = key;
+    const bounds = L.latLngBounds(
+      [userLocation.lat, userLocation.lng],
+      [bus.lat, bus.lng]
+    );
+    map.flyToBounds(bounds, { padding: [80, 80], duration: 1.2, maxZoom: 16 });
+  }, [userLocation, bus, map]);
   return null;
 }
 
@@ -345,43 +362,94 @@ export default function MapView({ buses, userLocation, selectedBusId, onBusClick
         );
       })}
 
-      {/* Blue line: User location to Selected Bus */}
-      {userLocation && selectedBus?.lat && (
-        <Polyline
-          positions={[
-            [userLocation.lat, userLocation.lng],
-            [selectedBus.lat, selectedBus.lng]
-          ]}
-          color="#3b82f6"
-          dashArray="10, 10"
-          weight={3}
-          opacity={0.8}
-        >
-          <Tooltip permanent direction="center" offset={[0, 0]} opacity={0.9} className="distance-line-tooltip">
-            <div style={{ 
-              background: 'white', 
-              padding: '2px 8px', 
-              borderRadius: '20px', 
-              border: '2px solid #3b82f6',
-              fontWeight: 700, 
-              color: '#1d4ed8',
-              fontSize: '0.75rem',
-              whiteSpace: 'nowrap',
-              boxShadow: '0 2px 6px rgba(0,0,0,0.15)'
-            }}>
-              📏 {getDistance(userLocation.lat, userLocation.lng, selectedBus.lat, selectedBus.lng).toFixed(2)} km away
-            </div>
-          </Tooltip>
-        </Polyline>
+      {/* ── Blue path: User → Selected Bus ── */}
+      {userLocation && selectedBus?.lat && (() => {
+        const dist = getDistance(userLocation.lat, userLocation.lng, selectedBus.lat, selectedBus.lng);
+        return (
+          <>
+            {/* Outer glow line */}
+            <Polyline
+              positions={[
+                [userLocation.lat, userLocation.lng],
+                [selectedBus.lat, selectedBus.lng]
+              ]}
+              color="#93c5fd"
+              weight={10}
+              opacity={0.25}
+            />
+            {/* Main animated dashed line */}
+            <Polyline
+              positions={[
+                [userLocation.lat, userLocation.lng],
+                [selectedBus.lat, selectedBus.lng]
+              ]}
+              color="#2563eb"
+              dashArray="14, 10"
+              weight={4}
+              opacity={0.95}
+              className="user-to-bus-path"
+            >
+              <Tooltip
+                permanent
+                direction="center"
+                offset={[0, 0]}
+                opacity={1}
+                className="distance-line-tooltip"
+              >
+                <div style={{
+                  background: '#1d4ed8',
+                  padding: '4px 12px',
+                  borderRadius: '20px',
+                  border: '2px solid white',
+                  fontWeight: 700,
+                  color: 'white',
+                  fontSize: '0.75rem',
+                  whiteSpace: 'nowrap',
+                  boxShadow: '0 3px 10px rgba(37,99,235,0.5)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}>
+                  <span>📏</span>
+                  <span>{dist < 1 ? `${(dist * 1000).toFixed(0)} m` : `${dist.toFixed(2)} km`} away</span>
+                </div>
+              </Tooltip>
+            </Polyline>
+
+            {/* Pulsing ring at user's end of the path */}
+            <Marker
+              position={[userLocation.lat, userLocation.lng]}
+              icon={L.divIcon({
+                html: `<div style="
+                  width:32px; height:32px;
+                  border-radius:50%;
+                  border: 3px solid #2563eb;
+                  box-shadow: 0 0 0 6px rgba(37,99,235,0.2), 0 0 14px rgba(37,99,235,0.5);
+                  background: rgba(37,99,235,0.15);
+                  animation: userPulse 1.6s ease-in-out infinite;
+                "></div>`,
+                className: '',
+                iconSize: [32, 32],
+                iconAnchor: [16, 16]
+              })}
+              interactive={false}
+            />
+          </>
+        );
+      })()}
+
+      {/* Fly to fit both user + selected bus in view */}
+      {selectedBus?.lat && userLocation && (
+        <FlyToBounds userLocation={userLocation} bus={selectedBus} />
       )}
 
-      {/* Fly to selected bus */}
-      {selectedBus?.lat && (
+      {/* Fly to selected bus only (no user location) */}
+      {selectedBus?.lat && !userLocation && (
         <FlyTo position={[selectedBus.lat, selectedBus.lng]} />
       )}
 
-      {/* Fly to user location when updated */}
-      {userLocation && (
+      {/* Fly to user location only when no bus is selected */}
+      {userLocation && !selectedBus && (
         <FlyTo position={[userLocation.lat, userLocation.lng]} zoom={15} />
       )}
     </MapContainer>
