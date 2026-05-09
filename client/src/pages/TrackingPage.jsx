@@ -450,7 +450,7 @@ export default function TrackingPage() {
                   <p style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
                     Send GPS data via Postman
                   </p>
-                  <code className="postman-hint">POST /api/bus/location</code>
+                  <code className="postman-hint">POST /api/buses</code>
                 </div>
               ) : (
                 <div className="bus-list">
@@ -522,7 +522,7 @@ export default function TrackingPage() {
               <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>📡</div>
               <h3>Waiting for GPS data…</h3>
               <p>Use Postman to send bus coordinates</p>
-              <code>POST http://localhost:5000/api/bus/location</code>
+              <code>POST http://localhost:5000/api/buses</code>
             </div>
           )}
 

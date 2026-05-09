@@ -266,132 +266,66 @@ async function resumeSimulations() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  REST API
+//  REST API  —  All routes unified under /api/buses
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * POST /api/bus/route
- * Set a bus's start & end location and begin automatic movement simulation.
- * Body: { busId, startLat, startLng, endLat, endLng, speed, routeName }
+ * POST /api/buses
+ * Create or update a bus and optionally start simulation.
+ * Body: { busId, lat, lng, speed, startLat, startLng, startName,
+ *         endLat, endLng, endName, stoppages, routeName }
+ * If startLat & endLat are provided, autonomous simulation is triggered.
  */
-app.post('/api/bus/route', async (req, res) => {
+app.post('/api/buses', async (req, res) => {
   try {
-    const { busId, startLat, startLng, startLon, endLat, endLng, endLon, speed = 40, routeName = '' } = req.body;
-    
-    const sLat = parseFloat(startLat);
-    const sLng = parseFloat(startLng ?? startLon);
-    const eLat = parseFloat(endLat);
-    const eLng = parseFloat(endLng ?? endLon);
-    const spd  = parseFloat(speed);
-
-    // Auto-fetch names if missing
-    let sName = req.body.startName || await getAreaName(sLat, sLng);
-    let eName = req.body.endName || await getAreaName(eLat, eLng);
-    let rName = routeName || `${sName} → ${eName}`;
-
-    // Upsert bus starting at startLat/startLng
-    const bus = await Bus.findOneAndUpdate(
-      { busId },
-      { busId, lat: sLat, lng: sLng, speed: spd, startLat: sLat, startLng: sLng,
-        endLat: eLat, endLng: eLng, routeName: rName, startName: sName, endName: eName, 
-        status: 'moving', updatedAt: new Date() },
-      { upsert: true, new: true }
-    );
-
-    // Broadcast initial position
-    io.emit('bus:locationUpdate', {
-      busId, lat: sLat, lng: sLng, speed: spd, status: 'moving',
-      startLat: sLat, startLng: sLng, endLat: eLat, endLng: eLng, routeName,
-      updatedAt: new Date(),
-    });
-
-    // Start simulation with 2 waypoints (start and end)
-    const waypoints = [
-      { lat: sLat, lng: sLng, name: 'Start' },
-      { lat: eLat, lng: eLng, name: 'End' }
-    ];
-    startSimulation(busId, waypoints, spd);
-
-    const totalDist = getDistance(sLat, sLng, eLat, eLng);
-    const etaMin = calculateETA(totalDist, spd);
-    res.json({
-      success: true,
-      message: `Bus ${busId} simulation started`,
-      bus: { busId, startLat: sLat, startLng: sLng, endLat: eLat, endLng: eLng, speed: spd, routeName },
-      totalDistanceKm: parseFloat(totalDist.toFixed(2)),
-      estimatedMinutes: parseFloat(etaMin.toFixed(1)),
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * POST /api/bus/stop/:busId
- * Stop simulation for a bus.
- */
-app.post('/api/bus/stop/:busId', async (req, res) => {
-  const { busId } = req.params;
-  if (simTimers.has(busId)) {
-    clearInterval(simTimers.get(busId));
-    simTimers.delete(busId);
-  }
-  await Bus.findOneAndUpdate({ busId }, { speed: 0, status: 'idle' });
-  io.emit('bus:locationUpdate', { busId, speed: 0, status: 'idle', updatedAt: new Date() });
-  res.json({ success: true, message: `Bus ${busId} stopped` });
-});
-
-/**
- * POST /api/bus/location
- * Manual GPS update from Postman (no simulation).
- */
-app.post('/api/bus/location', async (req, res) => {
-  try {
-    const { busId, lat, lng, lon, speed = 0, startLat, startLng, startLon, endLat, endLng, endLon, stoppages } = req.body;
-    const finalLat = lat;
-    const finalLng = lng ?? lon;
+    const { busId, lat, lng, lon, speed = 0, startLat, startLng, startLon, endLat, endLng, endLon, stoppages, routeName = '' } = req.body;
+    const finalLat = lat ?? startLat;
+    const finalLng = lng ?? lon ?? startLng ?? startLon;
 
     if (!busId || finalLat == null || finalLng == null)
       return res.status(400).json({ error: 'busId, lat, and lng are required' });
+
+    const sLat = startLat != null ? parseFloat(startLat) : null;
+    const sLng = startLng != null || startLon != null ? parseFloat(startLng ?? startLon) : null;
+    const eLat = endLat   != null ? parseFloat(endLat)   : null;
+    const eLng = endLng   != null || endLon != null ? parseFloat(endLng ?? endLon) : null;
+    const spd  = parseFloat(speed);
 
     const updateData = {
       busId,
       lat: parseFloat(finalLat),
       lng: parseFloat(finalLng),
-      speed: parseFloat(speed),
-      plannedSpeed: parseFloat(speed),
+      speed: spd,
+      plannedSpeed: spd,
       updatedAt: new Date()
     };
 
-    if (startLat != null) updateData.startLat = parseFloat(startLat);
-    if (startLng != null || startLon != null) updateData.startLng = parseFloat(startLng ?? startLon);
-    if (endLat != null)   updateData.endLat   = parseFloat(endLat);
-    if (endLng != null || endLon != null)   updateData.endLng   = parseFloat(endLng ?? endLon);
-    if (stoppages)        updateData.stoppages = stoppages;
+    if (sLat != null) updateData.startLat = sLat;
+    if (sLng != null) updateData.startLng = sLng;
+    if (eLat != null) updateData.endLat   = eLat;
+    if (eLng != null) updateData.endLng   = eLng;
+    if (stoppages)    updateData.stoppages = stoppages;
 
-    // Use provided names or auto-fetch if missing
-    updateData.startName = req.body.startName || (startLat != null ? await getAreaName(startLat, startLng) : '');
-    updateData.endName   = req.body.endName   || (endLat   != null ? await getAreaName(endLat,   endLng)  : '');
-    
-    // Fetch current location name if not provided
-    updateData.currentLocationName = req.body.currentLocationName || await getAreaName(lat, lng);
+    // Use provided names or auto-fetch
+    updateData.startName = req.body.startName || (sLat != null ? await getAreaName(sLat, sLng) : '');
+    updateData.endName   = req.body.endName   || (eLat != null ? await getAreaName(eLat, eLng) : '');
+    updateData.currentLocationName = req.body.currentLocationName || await getAreaName(parseFloat(finalLat), parseFloat(finalLng));
 
     // Auto-fetch stoppage names
     if (stoppages && Array.isArray(stoppages)) {
       const namedStoppages = [];
       for (const s of stoppages) {
-        if (!s.name && s.lat != null) {
-          s.name = await getAreaName(s.lat, s.lng);
-        }
+        if (!s.name && s.lat != null) s.name = await getAreaName(s.lat, s.lng ?? s.lon);
         namedStoppages.push(s);
       }
       updateData.stoppages = namedStoppages;
     }
-    
-    // Update routeName automatically if we have both names
+
     if (updateData.startName && updateData.endName) {
-      updateData.routeName = `${updateData.startName} → ${updateData.endName}`;
+      updateData.routeName = routeName || `${updateData.startName} → ${updateData.endName}`;
     }
+
+    if (sLat != null && eLat != null) updateData.status = 'moving';
 
     const bus = await Bus.findOneAndUpdate(
       { busId },
@@ -399,27 +333,30 @@ app.post('/api/bus/location', async (req, res) => {
       { upsert: true, new: true }
     );
 
-    // If startLat and endLat are provided, trigger simulation
-    if (startLat != null && endLat != null) {
-      const waypoints = [];
-      const sLat = parseFloat(startLat);
-      const sLng = parseFloat(startLng ?? startLon);
-      const eLat = parseFloat(endLat);
-      const eLng = parseFloat(endLng ?? endLon);
-
-      waypoints.push({ lat: sLat, lng: sLng, name: 'Start' });
-      
+    // Start simulation if route is provided
+    if (sLat != null && eLat != null) {
+      const waypoints = [{ lat: sLat, lng: sLng, name: updateData.startName || 'Start' }];
       if (stoppages && Array.isArray(stoppages)) {
         stoppages.forEach(s => waypoints.push({ ...s, lat: parseFloat(s.lat), lng: parseFloat(s.lng ?? s.lon) }));
       }
-      
-      waypoints.push({ lat: eLat, lng: eLng, name: 'End' });
-      
-      startSimulation(busId, waypoints, parseFloat(speed) || 40);
+      waypoints.push({ lat: eLat, lng: eLng, name: updateData.endName || 'End' });
+      startSimulation(busId, waypoints, spd || 40);
+
+      const totalDist = getDistance(sLat, sLng, eLat, eLng);
+      const etaMin    = calculateETA(totalDist, spd || 40);
+      io.emit('bus:locationUpdate', bus);
+      console.log(`🚌 POST /api/buses → ${busId} simulation started`);
+      return res.json({
+        success: true,
+        message: `Bus ${busId} created and simulation started`,
+        bus,
+        totalDistanceKm: parseFloat(totalDist.toFixed(2)),
+        estimatedMinutes: parseFloat(etaMin.toFixed(1)),
+      });
     }
 
     io.emit('bus:locationUpdate', bus);
-    console.log(`📍 ${busId} updated via POST → [${lat}, ${lng}] ${startLat ? '(Simulation Triggered)' : ''}`);
+    console.log(`📍 POST /api/buses → ${busId} created/updated`);
     res.json({ success: true, bus });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -427,30 +364,40 @@ app.post('/api/bus/location', async (req, res) => {
 });
 
 /**
- * PUT /api/bus/location
- * Update bus details including start/end and stoppages.
+ * PUT /api/buses
+ * Update an existing bus. Restarts simulation if route data is included.
+ * Body: { busId, ...fields }
+ * Also supports: PUT /api/buses?action=stop&busId=BUS101  → stop simulation
  */
-app.put('/api/bus/location', async (req, res) => {
+app.put('/api/buses', async (req, res) => {
   try {
+    // Support action=stop via query string
+    if (req.query.action === 'stop') {
+      const busId = req.query.busId || req.body.busId;
+      if (!busId) return res.status(400).json({ error: 'busId is required' });
+      if (simTimers.has(busId)) { clearInterval(simTimers.get(busId)); simTimers.delete(busId); }
+      await Bus.findOneAndUpdate({ busId }, { speed: 0, status: 'idle' });
+      io.emit('bus:locationUpdate', { busId, speed: 0, status: 'idle', updatedAt: new Date() });
+      return res.json({ success: true, message: `Bus ${busId} stopped` });
+    }
+
     const { busId, ...updateData } = req.body;
     if (!busId) return res.status(400).json({ error: 'busId is required' });
 
     // Handle aliases
     if (updateData.lng == null && updateData.lon != null) updateData.lng = updateData.lon;
     if (updateData.startLng == null && updateData.startLon != null) updateData.startLng = updateData.startLon;
-    if (updateData.endLng == null && updateData.endLon != null) updateData.endLng = updateData.endLon;
+    if (updateData.endLng  == null && updateData.endLon  != null) updateData.endLng  = updateData.endLon;
 
-    // Auto-fetch names if missing and coordinates are being updated
+    // Auto-fetch names if missing
     if (updateData.startLat != null && !updateData.startName) {
       updateData.startName = await getAreaName(updateData.startLat, updateData.startLng);
     }
     if (updateData.endLat != null && !updateData.endName) {
       updateData.endName = await getAreaName(updateData.endLat, updateData.endLng);
     }
-    
-    // Update routeName automatically if we have both names
     if (updateData.startName && updateData.endName) {
-      updateData.routeName = `${updateData.startName} → ${updateData.endName}`;
+      updateData.routeName = updateData.routeName || `${updateData.startName} → ${updateData.endName}`;
     }
 
     const bus = await Bus.findOneAndUpdate(
@@ -458,24 +405,20 @@ app.put('/api/bus/location', async (req, res) => {
       { ...updateData, updatedAt: new Date() },
       { new: true }
     );
-
     if (!bus) return res.status(404).json({ error: 'Bus not found' });
 
-    // If route data is provided in the update, restart simulation
+    // Restart simulation if route data provided
     if (updateData.startLat != null && updateData.endLat != null) {
-      const waypoints = [
-        { lat: parseFloat(updateData.startLat), lng: parseFloat(updateData.startLng), name: 'Start' }
-      ];
+      const waypoints = [{ lat: parseFloat(updateData.startLat), lng: parseFloat(updateData.startLng), name: 'Start' }];
       if (updateData.stoppages && Array.isArray(updateData.stoppages)) {
         updateData.stoppages.forEach(s => waypoints.push({ ...s, lat: parseFloat(s.lat), lng: parseFloat(s.lng ?? s.lon) }));
       }
       waypoints.push({ lat: parseFloat(updateData.endLat), lng: parseFloat(updateData.endLng), name: 'End' });
-      
       startSimulation(busId, waypoints, parseFloat(updateData.speed) || 40);
     }
 
     io.emit('bus:locationUpdate', bus);
-    console.log(`📝 ${busId} updated via PUT`);
+    console.log(`📝 PUT /api/buses → ${busId} updated`);
     res.json({ success: true, bus });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -483,45 +426,45 @@ app.put('/api/bus/location', async (req, res) => {
 });
 
 /**
- * GET /api/buses
+ * GET /api/buses          → returns all buses
+ * GET /api/buses?busId=X  → returns single bus by busId
  */
 app.get('/api/buses', async (req, res) => {
-  try { res.json(await Bus.find().sort({ updatedAt: -1 })); }
-  catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-/**
- * GET /api/bus/:busId
- */
-app.get('/api/bus/:busId', async (req, res) => {
   try {
-    const bus = await Bus.findOne({ busId: req.params.busId });
-    if (!bus) return res.status(404).json({ error: 'Bus not found' });
-    res.json(bus);
+    if (req.query.busId) {
+      const bus = await Bus.findOne({ busId: req.query.busId });
+      if (!bus) return res.status(404).json({ error: 'Bus not found' });
+      return res.json(bus);
+    }
+    res.json(await Bus.find().sort({ updatedAt: -1 }));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 /**
- * POST /api/distance
+ * DELETE /api/buses?busId=BUS101
+ * OR body: { busId: "BUS101" }
+ * Removes bus and stops its simulation.
+ */
+app.delete('/api/buses', async (req, res) => {
+  try {
+    const busId = req.query.busId || req.body.busId;
+    if (!busId) return res.status(400).json({ error: 'busId is required (query param or body)' });
+    if (simTimers.has(busId)) { clearInterval(simTimers.get(busId)); simTimers.delete(busId); }
+    await Bus.findOneAndDelete({ busId });
+    io.emit('bus:removed', { busId });
+    console.log(`🗑️  DELETE /api/buses → ${busId} removed`);
+    res.json({ success: true, message: `Bus ${busId} removed` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/**
+ * POST /api/distance  (utility — unchanged)
  */
 app.post('/api/distance', (req, res) => {
   const { lat1, lng1, lat2, lng2, speed = 40 } = req.body;
   const dist = getDistance(lat1, lng1, lat2, lng2);
   const eta = calculateETA(dist, speed);
   res.json({ distanceKm: parseFloat(dist.toFixed(2)), etaMinutes: parseFloat(eta.toFixed(1)) });
-});
-
-/**
- * DELETE /api/bus/:busId
- */
-app.delete('/api/bus/:busId', async (req, res) => {
-  try {
-    const { busId } = req.params;
-    if (simTimers.has(busId)) { clearInterval(simTimers.get(busId)); simTimers.delete(busId); }
-    await Bus.findOneAndDelete({ busId });
-    io.emit('bus:removed', { busId });
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 /**
@@ -546,8 +489,12 @@ mongoose
     const PORT = process.env.PORT || 5000;
     httpServer.listen(PORT, () => {
       console.log(`🚀 Server on http://localhost:${PORT}`);
-      console.log(`🛣️  Route: POST /api/bus/route  { busId, startLat, startLng, endLat, endLng, speed }`);
-      console.log(`📍 Manual: POST /api/bus/location { busId, lat, lng, speed }`);
+      console.log(`📋 GET    /api/buses              → List all buses`);
+      console.log(`📋 GET    /api/buses?busId=X      → Get single bus`);
+      console.log(`🚌 POST   /api/buses              → Create bus / start simulation`);
+      console.log(`📝 PUT    /api/buses              → Update bus / restart simulation`);
+      console.log(`🗑️  DELETE /api/buses?busId=X     → Remove bus`);
+      console.log(`⛔ PUT    /api/buses?action=stop&busId=X → Stop simulation`);
     });
   })
   .catch((err) => { console.error('❌ MongoDB error:', err.message); process.exit(1); });
