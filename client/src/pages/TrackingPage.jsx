@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSocket } from '../context/SocketContext';
 import MapView from '../components/MapView';
 import axios from 'axios';
@@ -57,7 +57,7 @@ function InfoPanel({ bus, userLocation, onClose }) {
   const urgencyLabel = { arriving: '🟢 Arriving Now!', close: '🟡 Getting Close', far: '🔵 On the Way' };
 
   return (
-    <div className="info-panel animate-slideUp">
+    <div className="info-panel animate-slideInRight">
       {/* Header */}
       <div className="info-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -235,11 +235,16 @@ export default function TrackingPage() {
   const [lastUpdate, setLastUpdate] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [mapStyle, setMapStyle] = useState('street'); // 'street', 'dark', 'satellite'
+  const [mapStyle, setMapStyle] = useState('street');
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [placeName, setPlaceName] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
+  const [isTracking, setIsTracking] = useState(false); // live GPS tracking state
+  const watchIdRef = useRef(null); // holds the watchPosition ID
+  const [userFocusTrigger, setUserFocusTrigger] = useState(0); // explicit trigger to fly to user location
+  const [manualLat, setManualLat] = useState('');
+  const [manualLng, setManualLng] = useState('');
 
   // Auto-collapse sidebar on small screens
   useEffect(() => {
@@ -352,6 +357,27 @@ export default function TrackingPage() {
     }
   };
 
+  const openLocationModal = () => {
+    if (userLocation) {
+      setManualLat(userLocation.lat.toString());
+      setManualLng(userLocation.lng.toString());
+    }
+    setShowLocationModal(true);
+  };
+
+  const handleManualCoords = (e) => {
+    e.preventDefault();
+    const lat = parseFloat(manualLat);
+    const lng = parseFloat(manualLng);
+    if (!isNaN(lat) && !isNaN(lng)) {
+      setUserLocation({ lat, lng });
+      setShowLocationModal(false);
+      setUpdateCount(c => c + 1);
+    } else {
+      alert("Please enter valid numeric coordinates.");
+    }
+  };
+
   const useLiveGPS = () => {
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
@@ -364,8 +390,45 @@ export default function TrackingPage() {
     );
   };
 
+  // ── Toggle Live GPS Tracking button ─────────────────────────────────
+  const toggleTracking = useCallback(() => {
+    if (!navigator.geolocation) {
+      setLocationError(true);
+      return;
+    }
+    if (isTracking) {
+      // Stop watching
+      if (watchIdRef.current != null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      setIsTracking(false);
+    } else {
+      // Start watching — fires immediately then on every move
+      setLocationError(false); // Clear error when trying again
+      const id = navigator.geolocation.watchPosition(
+        (pos) => {
+          setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          setLocationError(false);
+        },
+        () => {
+          setLocationError(true);
+          setIsTracking(false);
+        },
+        { enableHighAccuracy: true, maximumAge: 0 }
+      );
+      watchIdRef.current = id;
+      setIsTracking(true);
+    }
+  }, [isTracking]);
+
+  // Clean up watch on unmount
+  useEffect(() => () => {
+    if (watchIdRef.current != null) navigator.geolocation.clearWatch(watchIdRef.current);
+  }, []);
+
   const handleBusClick = useCallback((bus) => {
-    setSelectedBus((prev) => (prev?.busId === bus.busId ? null : bus));
+    setSelectedBus(bus); // Always select, don't toggle (prevents flying back to user on re-click)
     // On mobile, close sidebar after selecting
     if (window.innerWidth <= 640) setSidebarOpen(false);
   }, []);
@@ -419,16 +482,13 @@ export default function TrackingPage() {
           </div>
         </div>
 
-
-
         <div className="top-bar-info" style={{ marginLeft: 'auto' }}>
           {locationError
-            ? <span className="loc-badge warn" onClick={() => setShowLocationModal(true)} style={{ cursor: 'pointer' }}>⚠️ No location</span>
+            ? <span className="loc-badge warn" onClick={openLocationModal} style={{ cursor: 'pointer' }}>⚠️ No GPS</span>
             : userLocation
-              ? <span className="loc-badge ok" onClick={() => setShowLocationModal(true)} style={{ cursor: 'pointer' }}>📍 Located</span>
-              : <span className="loc-badge muted" onClick={() => setShowLocationModal(true)} style={{ cursor: 'pointer' }}>📍 Locating…</span>
+              ? <span className="loc-badge ok" onClick={openLocationModal} style={{ cursor: 'pointer' }} title="Change my location">📍 Located</span>
+              : <span className="loc-badge muted">📍 —</span>
           }
-         
         </div>
       </header>
 
@@ -439,18 +499,30 @@ export default function TrackingPage() {
           <div className="side-inner">
             <div className="side-section">
               <div className="side-heading">
-                🚌 Active Buses
-                <span className="count-badge">{buses.length}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  🚌 Active Buses
+                  <span className="count-badge">{buses.length}</span>
+                </div>
+
+                {/* Live GPS Tracking Button (Moved here) */}
+                <button
+                  id="live-location-btn"
+                  className={`live-loc-btn ${userLocation && !locationError ? 'tracking' : ''} ${locationError ? 'error' : ''}`}
+                  onClick={toggleTracking}
+                  style={{ marginLeft: 'auto', padding: '0.2rem 0.6rem', fontSize: '0.65rem' }}
+                  title={locationError ? 'Click to allow location access' : (isTracking ? 'Stop live tracking' : 'Start live GPS tracking')}
+                >
+                  <span className={`live-loc-dot ${userLocation && !locationError ? 'active' : ''}`} style={{ width: '6px', height: '6px' }} />
+                  <span className="live-loc-label">
+                    {locationError ? 'Allow Location' : 'Live'}
+                  </span>
+                </button>
               </div>
 
               {buses.length === 0 ? (
                 <div className="empty-state">
                   <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>📮</div>
                   <p>No buses online yet</p>
-                  <p style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
-                    Send GPS data via Postman
-                  </p>
-                  <code className="postman-hint">POST /api/buses</code>
                 </div>
               ) : (
                 <div className="bus-list">
@@ -467,12 +539,7 @@ export default function TrackingPage() {
               )}
             </div>
 
-            {/* Postman guide */}
-            <div className="postman-guide">
-              <div className="guide-note">
-                ✨ Map updates instantly via WebSocket!
-              </div>
-            </div>
+
           </div>
         </aside>
 
@@ -483,7 +550,9 @@ export default function TrackingPage() {
             userLocation={userLocation}
             selectedBusId={selectedBus?.busId}
             onBusClick={handleBusClick}
+            onMapClick={() => setSelectedBus(null)}
             mapStyle={mapStyle}
+            userFocusTrigger={userFocusTrigger}
           />
 
           {/* Map Style Switcher */}
@@ -505,6 +574,7 @@ export default function TrackingPage() {
             >🛰️</button>
           </div>
 
+
           {/* Info panel overlay */}
           {selectedBus && (
             <div className="info-panel-wrapper">
@@ -521,8 +591,6 @@ export default function TrackingPage() {
             <div className="map-empty-overlay">
               <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>📡</div>
               <h3>Waiting for GPS data…</h3>
-              <p>Use Postman to send bus coordinates</p>
-              <code>POST http://localhost:5000/api/buses</code>
             </div>
           )}
 
@@ -579,6 +647,36 @@ export default function TrackingPage() {
                       </div>
                     )}
                   </div>
+                </form>
+
+                <div className="modal-divider"><span>OR ENTER COORDINATES</span></div>
+
+                <form onSubmit={handleManualCoords}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+                    <div className="input-group" style={{ marginBottom: 0 }}>
+                      <label>Latitude</label>
+                      <input
+                        type="text"
+                        value={manualLat}
+                        onChange={e => setManualLat(e.target.value)}
+                        placeholder="e.g. 20.3150"
+                        required
+                      />
+                    </div>
+                    <div className="input-group" style={{ marginBottom: 0 }}>
+                      <label>Longitude</label>
+                      <input
+                        type="text"
+                        value={manualLng}
+                        onChange={e => setManualLng(e.target.value)}
+                        placeholder="e.g. 85.8250"
+                        required
+                      />
+                    </div>
+                  </div>
+                  <button type="submit" className="save-btn" style={{ width: '100%' }}>
+                    Update Manual Location
+                  </button>
                 </form>
 
                 <div className="modal-actions" style={{ marginTop: '1.5rem', gridTemplateColumns: '1fr' }}>

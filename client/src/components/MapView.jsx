@@ -1,20 +1,20 @@
 import { useEffect, useRef, useState, useMemo, memo } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 
 // ── Fix Leaflet default icon (Vite) ──────────────────────────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl:       'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
 // ── Bus icon (Custom SVG matching user image) ───────────────────────────────
 const makeBusIcon = (isSelected, bearing = 0, isMoving = false) => {
   const movingClass = isMoving ? 'moving' : '';
   const busColor = isSelected ? 'linear-gradient(135deg, #ef4444, #dc2626)' : 'linear-gradient(135deg, #dc2626, #b91c1c)';
-  
+
   return L.divIcon({
     html: `
       <div class="bus-container ${movingClass}" style="transform: rotate(${bearing}deg); width: 48px; height: 48px;">
@@ -95,10 +95,10 @@ const SmoothMarker = memo(({ position, icon, eventHandlers, children }) => {
       const animate = (time) => {
         const elapsed = time - startTime;
         const progress = Math.min(elapsed / duration, 1);
-        
+
         const lat = start[0] + (end[0] - start[0]) * progress;
         const lng = start[1] + (end[1] - start[1]) * progress;
-        
+
         if (markerRef.current) {
           markerRef.current.setLatLng([lat, lng]);
         }
@@ -176,16 +176,20 @@ const stopIcon = L.divIcon({
 });
 
 // ── Fly-to helper ─────────────────────────────────────────────────────────────
-function FlyTo({ position, zoom = 14 }) {
+function FlyTo({ position, zoom = 14, trigger }) {
   const map = useMap();
   const prevRef = useRef(null);
   useEffect(() => {
     if (!position) return;
-    const key = `${position[0].toFixed(4)},${position[1].toFixed(4)},${zoom}`;
+    // If trigger is provided, we use it to force a move even if position is same
+    const key = trigger != null 
+      ? `${position[0].toFixed(4)},${position[1].toFixed(4)},${zoom},${trigger}`
+      : `${position[0].toFixed(4)},${position[1].toFixed(4)},${zoom}`;
+      
     if (key === prevRef.current) return;
     prevRef.current = key;
     map.flyTo(position, zoom, { duration: 1.0 });
-  }, [position, zoom, map]);
+  }, [position, zoom, map, trigger]);
   return null;
 }
 
@@ -207,13 +211,53 @@ function FlyToBounds({ userLocation, bus }) {
   return null;
 }
 
+// ── Map click → close bus panel ──────────────────────────────────────────────
+function MapClickHandler({ onMapClick }) {
+  useMapEvents({
+    click: () => { if (onMapClick) onMapClick(); },
+  });
+  return null;
+}
+
 // ── Main MapView ──────────────────────────────────────────────────────────────
-export default function MapView({ buses, userLocation, selectedBusId, onBusClick, mapStyle = 'street' }) {
+export default function MapView({ buses, userLocation, selectedBusId, onBusClick, onMapClick, mapStyle = 'street', userFocusTrigger = 0 }) {
   const center = userLocation
     ? [userLocation.lat, userLocation.lng]
     : [20.2961, 85.8245];
 
   const selectedBus = buses.find((b) => b.busId === selectedBusId);
+
+  // ── OSRM road route: user → selected bus ─────────────────────────────────
+  const [routeCoords, setRouteCoords] = useState(null);
+  const [routeDistKm, setRouteDistKm] = useState(null);
+
+  useEffect(() => {
+    if (!userLocation || !selectedBus?.lat) {
+      setRouteCoords(null);
+      setRouteDistKm(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchRoute = async () => {
+      try {
+        const url =
+          `https://router.project-osrm.org/route/v1/driving/` +
+          `${userLocation.lng},${userLocation.lat};${selectedBus.lng},${selectedBus.lat}` +
+          `?overview=full&geometries=geojson`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!cancelled && data.routes?.[0]) {
+          const coords = data.routes[0].geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+          setRouteCoords(coords);
+          setRouteDistKm((data.routes[0].distance / 1000));
+        }
+      } catch {
+        if (!cancelled) { setRouteCoords(null); setRouteDistKm(null); }
+      }
+    };
+    fetchRoute();
+    return () => { cancelled = true; };
+  }, [userLocation?.lat, userLocation?.lng, selectedBus?.lat, selectedBus?.lng]);
 
   // Map Tile Layers Configuration
   const tileLayers = {
@@ -324,15 +368,20 @@ export default function MapView({ buses, userLocation, selectedBusId, onBusClick
               <SmoothMarker
                 position={[bus.lat, bus.lng]}
                 icon={makeBusIcon(isSelected, bus.bearing || 0, bus.speed > 0)}
-                eventHandlers={{ click: () => onBusClick(bus) }}
+                eventHandlers={{
+                  click: (e) => {
+                    L.DomEvent.stopPropagation(e); // prevent map click from also firing → closes panel
+                    onBusClick(bus);
+                  },
+                }}
               >
                 {/* Countdown Tooltip when waiting at a stop */}
                 {bus.waitTicks > 0 && (
-                  <Tooltip 
-                    permanent 
-                    direction="top" 
-                    offset={[0, -32]} 
-                    opacity={1} 
+                  <Tooltip
+                    permanent
+                    direction="top"
+                    offset={[0, -32]}
+                    opacity={1}
                     className="wait-tooltip"
                   >
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '60px' }}>
@@ -362,32 +411,37 @@ export default function MapView({ buses, userLocation, selectedBusId, onBusClick
         );
       })}
 
-      {/* ── Blue path: User → Selected Bus ── */}
+      {/* ── Road Route: User → Selected Bus (OSRM) ── */}
       {userLocation && selectedBus?.lat && (() => {
-        const dist = getDistance(userLocation.lat, userLocation.lng, selectedBus.lat, selectedBus.lng);
+        // Use road distance if fetched, else fall back to straight-line
+        const straightDist = getDistance(userLocation.lat, userLocation.lng, selectedBus.lat, selectedBus.lng);
+        const distLabel = routeDistKm != null
+          ? (routeDistKm < 1 ? `${(routeDistKm * 1000).toFixed(0)} m` : `${routeDistKm.toFixed(2)} km`)
+          : (straightDist < 1 ? `${(straightDist * 1000).toFixed(0)} m` : `${straightDist.toFixed(2)} km`);
+
+        // Use road coords if ready, else straight fallback
+        const positions = routeCoords ?? [
+          [userLocation.lat, userLocation.lng],
+          [selectedBus.lat, selectedBus.lng],
+        ];
+
         return (
           <>
-            {/* Outer glow line */}
+            {/* Outer glow */}
             <Polyline
-              positions={[
-                [userLocation.lat, userLocation.lng],
-                [selectedBus.lat, selectedBus.lng]
-              ]}
+              positions={positions}
               color="#93c5fd"
-              weight={10}
-              opacity={0.25}
+              weight={12}
+              opacity={0.22}
             />
-            {/* Main animated dashed line */}
+            {/* Main road route line (solid when OSRM loaded, dashed while loading) */}
             <Polyline
-              positions={[
-                [userLocation.lat, userLocation.lng],
-                [selectedBus.lat, selectedBus.lng]
-              ]}
+              positions={positions}
               color="#2563eb"
-              dashArray="14, 10"
+              dashArray={routeCoords ? undefined : '14, 10'}
               weight={4}
               opacity={0.95}
-              className="user-to-bus-path"
+              className={routeCoords ? '' : 'user-to-bus-path'}
             >
               <Tooltip
                 permanent
@@ -410,13 +464,13 @@ export default function MapView({ buses, userLocation, selectedBusId, onBusClick
                   alignItems: 'center',
                   gap: '4px'
                 }}>
-                  <span>📏</span>
-                  <span>{dist < 1 ? `${(dist * 1000).toFixed(0)} m` : `${dist.toFixed(2)} km`} away</span>
+                  <span>{routeCoords ? '🗺️' : '📏'}</span>
+                  <span>{distLabel} {routeCoords ? 'by road' : 'away'}</span>
                 </div>
               </Tooltip>
             </Polyline>
 
-            {/* Pulsing ring at user's end of the path */}
+            {/* Pulsing ring at user's location */}
             <Marker
               position={[userLocation.lat, userLocation.lng]}
               icon={L.divIcon({
@@ -438,6 +492,9 @@ export default function MapView({ buses, userLocation, selectedBusId, onBusClick
         );
       })()}
 
+      {/* Map click handler — closes bus panel without blocking map interactions */}
+      <MapClickHandler onMapClick={onMapClick} />
+
       {/* Fly to fit both user + selected bus in view */}
       {selectedBus?.lat && userLocation && (
         <FlyToBounds userLocation={userLocation} bus={selectedBus} />
@@ -448,9 +505,9 @@ export default function MapView({ buses, userLocation, selectedBusId, onBusClick
         <FlyTo position={[selectedBus.lat, selectedBus.lng]} />
       )}
 
-      {/* Fly to user location only when no bus is selected */}
-      {userLocation && !selectedBus && (
-        <FlyTo position={[userLocation.lat, userLocation.lng]} zoom={15} />
+      {/* Fly to user location only when explicitly triggered (e.g. clicking 'Located' badge) */}
+      {userLocation && userFocusTrigger > 0 && (
+        <FlyTo position={[userLocation.lat, userLocation.lng]} zoom={16} trigger={userFocusTrigger} />
       )}
     </MapContainer>
   );

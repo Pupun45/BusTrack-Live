@@ -260,6 +260,132 @@ body {
   color: #94a3b8;
 }
 
+.loc-edit-btn {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  color: #475569;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+  text-transform: uppercase;
+}
+
+.loc-edit-btn:hover {
+  background: #f8fafc;
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* ── Live Location Button (Premium) ────────────────────────────────────── */
+.live-loc-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.85rem;
+  background: #ffffff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: var(--r-full);
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #94a3b8;
+  /* Default Grey */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  position: relative;
+  overflow: hidden;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.live-loc-btn:hover {
+  border-color: #cbd5e1;
+  transform: translateY(-1px);
+}
+
+.live-loc-btn.tracking {
+  border-color: var(--primary);
+  color: var(--primary);
+  /* Active Blue */
+  background: rgba(99, 102, 241, 0.03);
+}
+
+.live-loc-btn.error {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.05);
+  animation: shake 0.5s cubic-bezier(.36, .07, .19, .97) both;
+}
+
+@keyframes shake {
+
+  10%,
+  90% {
+    transform: translate3d(-1px, 0, 0);
+  }
+
+  20%,
+  80% {
+    transform: translate3d(2px, 0, 0);
+  }
+
+  30%,
+  50%,
+  70% {
+    transform: translate3d(-4px, 0, 0);
+  }
+
+  40%,
+  60% {
+    transform: translate3d(4px, 0, 0);
+  }
+}
+
+.live-loc-dot {
+  width: 7px;
+  height: 7px;
+  background: #cbd5e1;
+  /* Inactive Grey */
+  border-radius: 50%;
+  transition: all 0.3s var(--ease);
+  position: relative;
+}
+
+.live-loc-dot.active {
+  background: var(--primary);
+  /* Active Blue */
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.live-loc-dot.active::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--primary);
+  animation: pulse-ring 1.5s infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.5);
+    opacity: 1;
+  }
+
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+.live-loc-label {
+  white-space: nowrap;
+}
+
 .bus-count-pill {
   font-size: 0.72rem;
   font-weight: 700;
@@ -567,23 +693,41 @@ body {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   INFO PANEL (Swiggy-style bottom card)
+   INFO PANEL (Right-side drawer)
 ══════════════════════════════════════════════════════════════════════════ */
-.info-panel-wrapper {
+
+/* Transparent backdrop — clicking it closes the panel */
+.info-panel-backdrop {
   position: absolute;
-  bottom: 1.25rem;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(460px, 94%);
+  inset: 0;
+  z-index: 890;
+  background: transparent;
+}
+
+.info-panel-wrapper {
+  max-height: 500px;
+  position: absolute;
+  top: 40px;
+  right: 0;
+  bottom: 0;
+  width: min(360px, 94%);
   z-index: 900;
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem 0.75rem 0.75rem 0;
+  pointer-events: none;
+  /* let click-outside backdrop work beneath */
 }
 
 .info-panel {
+  pointer-events: all;
   background: var(--bg-card);
   border: 1px solid var(--border-glow);
   border-radius: var(--r-xl);
   box-shadow: var(--shadow), var(--glow);
   overflow: hidden;
+  height: 100%;
+  overflow-y: auto;
 }
 
 .info-header {
@@ -764,10 +908,13 @@ body {
 }
 
 @keyframes userPulse {
-  0%, 100% {
+
+  0%,
+  100% {
     box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.5), 0 0 14px rgba(37, 99, 235, 0.3);
     transform: scale(1);
   }
+
   50% {
     box-shadow: 0 0 0 10px rgba(37, 99, 235, 0), 0 0 24px rgba(37, 99, 235, 0.5);
     transform: scale(1.15);
@@ -799,6 +946,22 @@ body {
 
 .animate-slideUp {
   animation: slideUp 0.28s var(--ease);
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(32px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slideInRight {
+  animation: slideInRight 0.28s var(--ease);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -861,18 +1024,39 @@ body {
     z-index: -1;
   }
 
-  /* Info panel — full width at bottom */
+  /* Override slide animation: bottom sheet slides UP on mobile */
+  .animate-slideInRight {
+    animation: slideUp 0.28s var(--ease);
+  }
+
+  /* Info panel — compact bottom sheet on mobile */
   .info-panel-wrapper {
+    top: auto;
     bottom: 0;
     left: 0;
     right: 0;
-    transform: none;
     width: 100%;
-    border-radius: var(--r-xl) var(--r-xl) 0 0;
+    max-height: 55vh;
+    padding: 0;
+    flex-direction: column;
   }
 
   .info-panel {
     border-radius: var(--r-xl) var(--r-xl) 0 0;
+    height: auto;
+    max-height: 55vh;
+    overflow-y: auto;
+  }
+
+  /* Drag handle hint at top of bottom sheet */
+  .info-header::before {
+    content: '';
+    display: block;
+    width: 36px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.4);
+    border-radius: 2px;
+    margin: 0 auto 0.6rem;
   }
 
   /* Stats — 2x2 on mobile */
@@ -880,9 +1064,52 @@ body {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  /* ETA font smaller */
+  /* Smaller ETA number */
   .eta-value-text {
-    font-size: 2rem;
+    font-size: 1.8rem;
+  }
+
+  /* Tighter info body padding */
+  .info-body {
+    padding: 0.6rem 0.85rem;
+    gap: 0.5rem;
+  }
+
+  /* Tighter header */
+  .info-header {
+    padding: 0.65rem 0.85rem 0.6rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .info-header>div:first-child {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .close-btn {
+    position: absolute;
+    top: 0.6rem;
+    right: 0.85rem;
+  }
+
+  /* Smaller bus icon in header */
+  .bus-icon-lg {
+    width: 36px;
+    height: 36px;
+    font-size: 1.1rem;
+  }
+
+  /* Stoppages timeline compact */
+  .stoppages-timeline h4 {
+    font-size: 0.75rem;
+  }
+
+  .timeline-container {
+    max-height: 100px !important;
   }
 
   /* Show compact badges on mobile */
@@ -930,7 +1157,35 @@ body {
   }
 
   .eta-value-text {
-    font-size: 1.75rem;
+    font-size: 1.4rem;
+  }
+
+  /* Even more compact bottom sheet */
+  .info-panel-wrapper,
+  .info-panel {
+    max-height: 48vh;
+  }
+
+  .info-header {
+    padding: 0.5rem 0.7rem;
+  }
+
+  .info-body {
+    padding: 0.4rem 0.7rem;
+    gap: 0.35rem;
+  }
+
+  .stat-box {
+    padding: 0.35rem 0.25rem;
+  }
+
+  .stat-val {
+    font-size: 0.65rem;
+  }
+
+  .urgency-badge {
+    font-size: 0.68rem;
+    padding: 0.2rem 0.55rem;
   }
 }
 
@@ -1191,19 +1446,24 @@ body {
 @media (max-width: 768px) {
   .top-bar-search {
     margin: 0 0.3rem;
-    max-width: 120px; /* Tighter search on mobile */
+    max-width: 120px;
+    /* Tighter search on mobile */
   }
+
   .brand-name {
     display: block !important;
     font-size: 0.8rem;
     white-space: nowrap;
   }
+
   .brand-icon {
     display: none;
   }
+
   .bus-count-label {
     display: none !important;
   }
+
   .top-bar-info {
     gap: 0.25rem;
   }
@@ -1374,6 +1634,8 @@ body {
 }
 
 .save-btn {
+  height: 54px;
+  border-radius: 10px;
   background: var(--primary);
   border: 1px solid var(--primary);
   color: white;
